@@ -110,7 +110,7 @@ namespace AIVoiceBotRecordIncomingCalls
             public string CallId;
         }
 
-        private static ConcurrentDictionary<string, CallRecordingState> _callRecordings = new();
+        private static ConcurrentDictionary<string, CallRecordingState> _callRecordings = new ConcurrentDictionary<string, CallRecordingState>();
 
         static async Task Main()
         {

@@ -1,13 +1,5 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Security.Cryptography.X509Certificates;
-using System.Threading;
-using System.Threading.Tasks;
-using AIVoiceBot.Client;
+﻿using AIVoiceBot.Client;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NAudio.MediaFoundation;
@@ -20,6 +12,16 @@ using SIPSorcery.SIP;
 using SIPSorcery.SIP.App;
 using SIPSorcery.Sys;
 using SIPSorceryMedia.Abstractions;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+using System.Threading;
+using System.Threading.Tasks;
+using static Org.BouncyCastle.Math.EC.ECCurve;
 
 namespace SIPSorcery
 {
@@ -107,7 +109,7 @@ namespace SIPSorcery
             public string CallId;
         }
 
-        private static ConcurrentDictionary<string, CallRecordingState> _callRecordings = new();
+        private static ConcurrentDictionary<string, CallRecordingState> _callRecordings = new ConcurrentDictionary<string, CallRecordingState>();
 
         private class CallAIState
         {
@@ -119,21 +121,38 @@ namespace SIPSorcery
             public string ToUser;
         }
 
-        private static ConcurrentDictionary<string, CallAIState> _aiStates = new();
-
-        private static readonly int SilenceThreshold = 500; // ms
-        private static readonly short SilencePcmLevel = 500; // PCM amplitude threshold
-        private static readonly int SampleRate = 8000;
-        private static readonly int BytesPerSample = 2;
-        private static readonly int Channels = 1;
-        private static readonly int SilenceWindowMs = 1000; // To detect 1 second of silence
-        private static readonly int SegmentBytes = SampleRate * BytesPerSample * Channels * SegmentSeconds;
+        private static ConcurrentDictionary<string, CallAIState> _aiStates = new ConcurrentDictionary<string, CallAIState>();
+        private static int SilenceThreshold;
+        private static short SilencePcmLevel;
+        private static int SampleRate;
+        private static int BytesPerSample;
+        private static int Channels;
+        private static int SilenceWindowMs;
+        private static int SegmentBytes;
 
         private static WhisperClient _whisperClient = new WhisperClient("OPENAI_API_KEY"); // Enter your API key here
+        private static int maxSimultaneousCalls;
 
         static async Task Main()
         {
             Console.WriteLine("AIVoiceBot SIP Call Server example.");
+
+            // Load configuration
+            var config = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true)
+                .AddJsonFile("appsettings.Development.json", optional: true)
+                .Build();
+
+            maxSimultaneousCalls = config.GetValue<int>("MaxSimultaneousCalls", 10);
+
+            SilenceThreshold = config.GetValue<int>("SilenceThreshold", 500);
+            SilencePcmLevel = (short)config.GetValue<int>("SilencePcmLevel", 500);
+            SampleRate = config.GetValue<int>("SampleRate", 8000);
+            BytesPerSample = config.GetValue<int>("BytesPerSample", 2);
+            Channels = config.GetValue<int>("Channels", 1);
+            SilenceWindowMs = config.GetValue<int>("SilenceWindowMs", 1500);
+            SegmentBytes = SampleRate * BytesPerSample * Channels * SegmentSeconds;
 
             if (!_isHeadless)
             {
@@ -378,11 +397,11 @@ namespace SIPSorcery
         {
             List<AudioCodecsEnum> codecs = new List<AudioCodecsEnum> { AudioCodecsEnum.PCMU, AudioCodecsEnum.PCMA, AudioCodecsEnum.G722 };
 
-            var audioSource = AudioSourcesEnum.SineWave;
-            if (string.IsNullOrEmpty(dst) || !Enum.TryParse(dst, out audioSource))
+            var audioSource = AudioSourcesEnum.None;
+            /*if (string.IsNullOrEmpty(dst) || !Enum.TryParse(dst, out audioSource))
             {
                 audioSource = AudioSourcesEnum.Music;
-            }
+            }*/
 
             Log.LogInformation($"RTP audio session source set to {audioSource}.");
 
@@ -410,7 +429,7 @@ namespace SIPSorcery
 
                 //Log.LogDebug($"From user: {fromUser}, To user: {toUser}");
 
-                OnRtpPacketReceived(ua, ep, type, rtp, fromUser, toUser);
+                OnRtpPacketReceived(ua, ep, type, rtp, rtpAudioSession, fromUser, toUser);
             };
             rtpAudioSession.OnTimeout += (mediaType) =>
             {
@@ -541,6 +560,14 @@ namespace SIPSorcery
                 else if (sipRequest.Method == SIPMethodsEnum.INVITE)
                 {
                     Log.LogInformation($"Incoming call request: {localSIPEndPoint}<-{remoteEndPoint} {sipRequest.URI}.");
+
+                    if (_calls.Count >= maxSimultaneousCalls) // Example limit, adjust as needed
+                    {
+                        Log.LogWarning("Maximum number of simultaneous calls reached, rejecting incoming call.");
+                        SIPResponse busyResponse = SIPResponse.GetResponse(sipRequest, SIPResponseStatusCodesEnum.BusyHere, null);
+                        await _sipTransport.SendResponseAsync(busyResponse);
+                        return;
+                    }
 
                     SIPUserAgent ua = new SIPUserAgent(_sipTransport, null);
                     ua.OnCallHungup += OnHangup;
@@ -703,10 +730,10 @@ namespace SIPSorcery
         /// <summary>
         /// Sending TTS audio to the client via RTP (example)
         /// </summary>
-        private static async Task SendAudioToClientAsync(SIPUserAgent ua, byte[] ttsAudio)
+        private static async Task SendAudioToClientAsync(SIPUserAgent ua, byte[] ttsAudio, VoIPMediaSession voipMediaSession)
         {
-            // Split ttsAudio into appropriate RTP packets and send via ua.MediaSession
-            // This part depends on the RTP/MediaSession API you are using
+            //await voipMediaSession.AudioExtrasSource.SendAudioFromStream(new MemoryStream(ttsAudio), AudioSamplingRatesEnum.Rate8KHz);
+            await voipMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("test_output.wav", FileMode.Open), AudioSamplingRatesEnum.Rate8KHz);
         }
 
         /// <summary>
@@ -717,6 +744,7 @@ namespace SIPSorcery
             IPEndPoint remoteEp,
             SDPMediaTypesEnum type,
             RTPPacket rtpPacket,
+            VoIPMediaSession voIPMediaSession,
             string fromUser,
             string toUser)
         {
@@ -767,7 +795,7 @@ namespace SIPSorcery
                 byte[] ttsAudio = await SendToTTSAsync(botReply, SampleRate);
 
                 // 4. Send TTS audio to the client via RTP
-                await SendAudioToClientAsync(ua, ttsAudio);
+                await SendAudioToClientAsync(ua, ttsAudio, voIPMediaSession);
 
                 // 5. Reset the state
                 state.IsProcessing = false;
