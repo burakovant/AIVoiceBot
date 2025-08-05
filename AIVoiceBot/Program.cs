@@ -610,7 +610,7 @@ namespace SIPSorcery
                     {
                         await rtpSession.Start();
                         _calls.TryAdd(ua.Dialogue.CallId, ua);
-                        string systemPrompt = "Sen Türkçe konuşan yardımsever bir asistansın."; // veya ihtiyaca göre
+                        string systemPrompt = "Sen Türkçe konuşan yardımsever bir asistansın. 3 cümleyi geçmesin cevapların."; // veya ihtiyaca göre
                         var llmClient = new LLMClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY", systemPrompt);
                         _llmClients.TryAdd(ua.Dialogue.CallId, llmClient);
                     }
@@ -821,18 +821,26 @@ namespace SIPSorcery
 
                 try
                 {
-                    Log.LogInformation($"Processing speech data for call {callId} from {fromUser} to {toUser}.");
-                    // 1. Send to STT
-                    string recognizedText = await SendToSTTAsync(speechData, SampleRate);
+                    // speechData boşsa işleme girme
+                    if (speechData.Length > 44) // WAV header'ı 44 bayt, sadece header ise ses yoktur
+                    {
+                        Log.LogInformation($"Processing speech data for call {callId} from {fromUser} to {toUser}.");
+                        // 1. Send to STT
+                        string recognizedText = await SendToSTTAsync(speechData, SampleRate);
 
-                    // 2. Send to LLM
-                    string botReply = await SendToLLMAsync(recognizedText, callId);
+                        // 2. Send to LLM
+                        string botReply = await SendToLLMAsync(recognizedText, callId);
 
-                    // 3. Send to TTS
-                    byte[] ttsAudio = await SendToTTSAsync(botReply, SampleRate);
+                        // 3. Send to TTS
+                        byte[] ttsAudio = await SendToTTSAsync(botReply, SampleRate);
 
-                    // 4. Send TTS audio to the client via RTP
-                    await SendAudioToClientAsync(ua, ttsAudio, voIPMediaSession);
+                        // 4. Send TTS audio to the client via RTP
+                        await SendAudioToClientAsync(ua, ttsAudio, voIPMediaSession);
+                    }
+                    else
+                    {
+                        Log.LogInformation($"No valid speech data to process for call {callId} from {fromUser} to {toUser}.");
+                    }
                 }
                 catch (Exception ex)
                 {

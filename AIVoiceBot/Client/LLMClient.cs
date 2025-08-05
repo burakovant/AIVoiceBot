@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using WebSocketSharp;
 
 namespace AIVoiceBot.Client
 {
@@ -13,6 +13,7 @@ namespace AIVoiceBot.Client
         private readonly string _apiKey;
         private readonly string _systemPrompt;
         private readonly HttpClient _httpClient;
+        private string _cachedContent;
         private const string GeminiApiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
 
         public LLMClient(string apiKey, string systemPrompt)
@@ -24,18 +25,19 @@ namespace AIVoiceBot.Client
 
         public async Task<string> GetChatCompletionAsync(string userInput)
         {
-            var requestBody = new
+            LLMRequest requestBody = new LLMRequest
             {
-                contents = new[]
+                Contents = new List<Content>
                 {
-            new
-            {
-                parts = new[]
-                {
-                    new { text = userInput }
-                }
-            }
-        }
+                    new Content
+                    {
+                        Parts = new List<Part>
+                        {
+                            new Part { Text = userInput }
+                        }
+                    }
+                },
+                CachedContent = _cachedContent.IsNullOrEmpty() ? null : _cachedContent
             };
 
             var json = JsonSerializer.Serialize(requestBody);
@@ -53,6 +55,10 @@ namespace AIVoiceBot.Client
                 .GetProperty("parts")[0]
                 .GetProperty("text")
                 .GetString();
+
+            _cachedContent = root.TryGetProperty("cachedContent", out var cachedContentElement)
+                ? cachedContentElement.GetString()
+                : null;
 
             return reply;
         }
