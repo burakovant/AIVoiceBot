@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NAudio.MediaFoundation;
 using NAudio.Wave;
+using Org.BouncyCastle.Asn1.Ocsp;
 using Serilog;
 using Serilog.Extensions.Logging;
 using SIPSorcery.Media;
@@ -130,8 +131,11 @@ namespace SIPSorcery
         private static int SilenceWindowMs;
         private static int SegmentBytes;
 
-        private static WhisperClient _whisperClient = new WhisperClient("OPENAI_API_KEY"); // Enter your API key here
+        private static STTClient _sttClient = new STTClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY"); // Enter your API key here
+        private static TTSClient _ttsClient = new TTSClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY"); // Enter your API key here
         private static int maxSimultaneousCalls;
+
+        private static ConcurrentDictionary<string, LLMClient> _llmClients = new ConcurrentDictionary<string, LLMClient>();
 
         static async Task Main()
         {
@@ -507,18 +511,18 @@ namespace SIPSorcery
                         state.CurrentSegmentWriter.Dispose();
                         Log.LogDebug($"Segment file closed: {closedFileName}");
 
-                        // Send to Whisper API
+                        // Send to STT API
                         _ = Task.Run(async () =>
                         {
                             try
                             {
-                                string recognizedText = await _whisperClient.TranscribeAsync(closedFileName, "tr"); // or "en"
-                                Log.LogInformation($"Whisper STT result for {closedFileName}: {recognizedText}");
+                                //string recognizedText = await _sttClient.RecognizeAsync(closedFileName, "tr-TR"); // or "en"
+                                //Log.LogInformation($"STT result for {closedFileName}: {recognizedText}");
                                 // Here you can start LLM/TTS integration with recognizedText
                             }
                             catch (Exception ex)
                             {
-                                Log.LogError($"Whisper API error for {closedFileName}: {ex.Message}");
+                                Log.LogError($"STT API error for {closedFileName}: {ex.Message}");
                             }
                         });
 
@@ -606,6 +610,9 @@ namespace SIPSorcery
                     {
                         await rtpSession.Start();
                         _calls.TryAdd(ua.Dialogue.CallId, ua);
+                        string systemPrompt = "Sen Türkçe konuşan yardımsever bir asistansın."; // veya ihtiyaca göre
+                        var llmClient = new LLMClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY", systemPrompt);
+                        _llmClients.TryAdd(ua.Dialogue.CallId, llmClient);
                     }
                 }
                 else if (sipRequest.Method == SIPMethodsEnum.BYE)
@@ -641,6 +648,8 @@ namespace SIPSorcery
                 string callId = dialogue.CallId;
                 if (_calls.ContainsKey(callId))
                 {
+                    _llmClients.TryRemove(callId, out _);
+                    Log.LogInformation($"Call {callId} with {dialogue.RemoteTarget} hungup, removing its llmClient.");
                     if (_calls.TryRemove(callId, out var ua))
                     {
                         // This app only uses each SIP user agent once so here the agent is 
@@ -705,17 +714,24 @@ namespace SIPSorcery
         private static async Task<string> SendToSTTAsync(byte[] pcmData, int sampleRate)
         {
             // Here, send pcmData to an STT service via HTTP POST and get the text
-            // Example: return await WhisperApi.RecognizeAsync(pcmData, sampleRate);
-            return "sample text";
+            string recognizedText = await _sttClient.RecognizeAsync(pcmData, sampleRate, "tr-TR"); // or "en"
+            //string recognizedText = "ses ses deneme";
+            Log.LogDebug($"STT result: {recognizedText}");
+            return recognizedText;
         }
 
         /// <summary>
         /// LLM integration (example, modify according to your own API)
         /// </summary>
-        private static async Task<string> SendToLLMAsync(string prompt, string fromUser, string toUser)
+        private static async Task<string> SendToLLMAsync(string userInput, string callId)
         {
-            // Example: return await OpenAI.ChatAsync(prompt);
-            return "sample answer";
+            string response = "Üzgünüm. Şu anda yardımcı olamıyorum.";
+            if (_llmClients.TryGetValue(callId, out var llmClient))
+            {
+                response = await llmClient.GetChatCompletionAsync(userInput);
+            }
+            Log.LogDebug($"LLM result: {response}");
+            return response;
         }
 
         /// <summary>
@@ -723,8 +739,9 @@ namespace SIPSorcery
         /// </summary>
         private static async Task<byte[]> SendToTTSAsync(string text, int sampleRate)
         {
-            // Example: return await ElevenLabsApi.SynthesizeAsync(text, sampleRate);
-            return new byte[0];
+            Log.LogDebug($"LLM response will be sent to TTS: {text}");
+            return await _ttsClient.SynthesizeSpeechAsync(text, "tr-TR");
+            // return new byte[0];
         }
 
         /// <summary>
@@ -732,8 +749,18 @@ namespace SIPSorcery
         /// </summary>
         private static async Task SendAudioToClientAsync(SIPUserAgent ua, byte[] ttsAudio, VoIPMediaSession voipMediaSession)
         {
+            // ALAW -> PCM çevirip MemoryStream ile gönderme örneği
+            byte[] pcmData = new byte[ttsAudio.Length * 2];
+            for (int i = 0; i < ttsAudio.Length; i++)
+            {
+                short pcm = NAudio.Codecs.ALawDecoder.ALawToLinearSample(ttsAudio[i]);
+                pcmData[2 * i] = (byte)(pcm & 0xFF);
+                pcmData[2 * i + 1] = (byte)(pcm >> 8);
+            }
+            using var ms = new MemoryStream(pcmData);
+            await voipMediaSession.AudioExtrasSource.SendAudioFromStream(ms, AudioSamplingRatesEnum.Rate8KHz);
             //await voipMediaSession.AudioExtrasSource.SendAudioFromStream(new MemoryStream(ttsAudio), AudioSamplingRatesEnum.Rate8KHz);
-            await voipMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("test_output.wav", FileMode.Open), AudioSamplingRatesEnum.Rate8KHz);
+            //await voipMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("test_output.wav", FileMode.Open), AudioSamplingRatesEnum.Rate8KHz);
         }
 
         /// <summary>
@@ -781,21 +808,37 @@ namespace SIPSorcery
                 byte[] speechData;
                 lock (state)
                 {
-                    speechData = state.CurrentSpeechBuffer.ToArray();
+                    using (var wavStream = new MemoryStream())
+                    {
+                        using (var writer = new WaveFileWriter(wavStream, new WaveFormat(8000, 16, 1)))
+                        {
+                            writer.Write(state.CurrentSpeechBuffer.ToArray(), 0, (int)state.CurrentSpeechBuffer.Length);
+                        }
+                        speechData = wavStream.ToArray();
+                    }
                     state.CurrentSpeechBuffer.SetLength(0); // reset the buffer
                 }
 
-                // 1. Send to STT
-                string recognizedText = await SendToSTTAsync(speechData, SampleRate);
+                try
+                {
+                    Log.LogInformation($"Processing speech data for call {callId} from {fromUser} to {toUser}.");
+                    // 1. Send to STT
+                    string recognizedText = await SendToSTTAsync(speechData, SampleRate);
 
-                // 2. Send to LLM
-                string botReply = await SendToLLMAsync(recognizedText, fromUser, toUser);
+                    // 2. Send to LLM
+                    string botReply = await SendToLLMAsync(recognizedText, callId);
 
-                // 3. Send to TTS
-                byte[] ttsAudio = await SendToTTSAsync(botReply, SampleRate);
+                    // 3. Send to TTS
+                    byte[] ttsAudio = await SendToTTSAsync(botReply, SampleRate);
 
-                // 4. Send TTS audio to the client via RTP
-                await SendAudioToClientAsync(ua, ttsAudio, voIPMediaSession);
+                    // 4. Send TTS audio to the client via RTP
+                    await SendAudioToClientAsync(ua, ttsAudio, voIPMediaSession);
+                }
+                catch (Exception ex)
+                {
+                    Log.LogError($"Error processing speech data: {ex.Message}", ex);
+                    await voIPMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("Sounds/Turkish_error_message.wav", FileMode.Open), AudioSamplingRatesEnum.Rate8KHz);
+                }
 
                 // 5. Reset the state
                 state.IsProcessing = false;
