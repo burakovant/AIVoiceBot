@@ -131,8 +131,8 @@ namespace SIPSorcery
         private static int SilenceWindowMs;
         private static int SegmentBytes;
 
-        private static STTClient _sttClient = new STTClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY"); // Enter your API key here
-        private static TTSClient _ttsClient = new TTSClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY"); // Enter your API key here
+        private static STTClient _sttClient = new STTClient("API_KEY"); // Enter your API key here
+        private static TTSClient _ttsClient = new TTSClient("API_KEY"); // Enter your API key here
         private static int maxSimultaneousCalls;
 
         private static ConcurrentDictionary<string, LLMClient> _llmClients = new ConcurrentDictionary<string, LLMClient>();
@@ -611,7 +611,7 @@ namespace SIPSorcery
                         await rtpSession.Start();
                         _calls.TryAdd(ua.Dialogue.CallId, ua);
                         string systemPrompt = "Sen Türkçe konuşan yardımsever bir asistansın. 3 cümleyi geçmesin cevapların."; // veya ihtiyaca göre
-                        var llmClient = new LLMClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY", systemPrompt);
+                        var llmClient = new LLMClient("API_KEY", systemPrompt);
                         _llmClients.TryAdd(ua.Dialogue.CallId, llmClient);
                     }
                 }
