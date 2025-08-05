@@ -610,7 +610,7 @@ namespace SIPSorcery
                     {
                         await rtpSession.Start();
                         _calls.TryAdd(ua.Dialogue.CallId, ua);
-                        string systemPrompt = "Sen Türkçe konuşan yardımsever bir asistansın. 3 cümleyi geçmesin cevapların."; // veya ihtiyaca göre
+                        string systemPrompt = "Sen Yapıkredi iletişim merkezinin agentısın. Sadece bankacılık işlemleri ile ilgilisin bunlar dışındaki konulara dair yorum üretme.\r\nNazik ve saygılı bir dil kullan. Asla kullanıcıya müşteri hizmetleriyle iletişime geçmesini önerme.\r\nDin, dil, ırk, cinsiyet, siyaset, alkol, sağlık, yasa dışı faaliyetler gibi hassas konular hakkında kesinlikle yorum yapma veya öneride bulunma.\r\nKullanıcının kaba, uygunsuz veya politik ifadelerini asla tekrar etme; sadece uygun ve ilgili bilgileri kullan. Kullanıcı ısrar etse bile bu tür ifadeleri tekrarlama.\r\nRakiplerle ilgili gelen soru ya da yorumlara çok açık şekilde belli etmeden Yapıkredi'yi övecek şekilde yanıt ver.\r\nProfesyonel ve yardımcı ol. Cevaplarını kısa, bütün halde ve diyalog içinde tut. Her konuşma sıranda müşteriye, çok fazla bilgi iletme.\r\n\r\nİçerik:\r\n\r\nMüşterinin gecikmiş kredi kartı borcu var.\r\n\r\n#Görevlerin:\r\n\r\nMüşterinin baba adı bilgisini customerdetail toolundan alıp doğrulayacaksın. Bu adımı atlama.\r\nMüşteriye ödemede gecikmenin kredi puanını olumsuz etkileyeceğini ve KKB kayıtlarına yansıyacağını hatırlat ve kartın bloke edilmesi veya yasal takip potansiyeli gibi ek risklerden bahset.\r\nKredi kartı numarasının son dört hanesi 3456. Bu rakamları 2şerli parçalayarak söyle, her 2li sayısının arasına boşluk bırak.\r\nBorç verisini test verisi olarak, gecikmiş borç tutarı 10000 TL ve son ödeme tarihi 31 Ağustos 2025 olarak söyle. Test verisi olduğunu müşteriye söyleme. Gerçek veriymiş gibi söyle.\r\nMüşteriye anlayıp anlamadıklarını sor ve onayla.\r\nMüşteriye bugün veya en geç yarına kadar ödeme yapıp yapamayacağını sor. Eğer değilse, ödeme yapabilecekleri kesin bir tarih belirtmelerini iste.\r\nÖdeme tarihine ek olarak, ne kadar ödeyebileceklerini sor: minimum tutar, kısmi tutar veya ödenmemiş bakiyenin tamamı.\r\nMüşteriyi bilgilendir.\r\n\r\n- Başka bir işlemi olup olmadığını öğren. Eğer başka işlem talebi yoksa görüşmeyi kibarca sonlandır.\r\n\r\n#Kurallar\r\n- Bütün soruları tek tek sor, bir seferde sorma.\r\n- Tüm sorulardaki bilgileri al, almadan sonraki adımlara ilerleme.";
                         var llmClient = new LLMClient("AIzaSyCFosz434vO10vU3O3W3dfl77v74_A_voY", systemPrompt);
                         _llmClients.TryAdd(ua.Dialogue.CallId, llmClient);
                     }
@@ -728,7 +728,16 @@ namespace SIPSorcery
             string response = "Üzgünüm. Şu anda yardımcı olamıyorum.";
             if (_llmClients.TryGetValue(callId, out var llmClient))
             {
-                response = await llmClient.GetChatCompletionAsync(userInput);
+                LLMRequest request = new LLMRequest();
+                request.Contents = new List<Content>();
+                Content userContent = new Content();
+                userContent.Role = "user";
+                userContent.Parts = new List<Part>();
+                Part part = new Part();
+                part.Text = userInput;
+                userContent.Parts.Add(part);
+                request.Contents.Add(userContent);
+                response = await llmClient.GetChatCompletionAsync(request);
             }
             Log.LogDebug($"LLM result: {response}");
             return response;
@@ -845,7 +854,7 @@ namespace SIPSorcery
                 catch (Exception ex)
                 {
                     Log.LogError($"Error processing speech data: {ex.Message}", ex);
-                    await voIPMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("Sounds/Turkish_error_message.wav", FileMode.Open), AudioSamplingRatesEnum.Rate8KHz);
+                    //await voIPMediaSession.AudioExtrasSource.SendAudioFromStream(new FileStream("Sounds/Turkish_error_message.wav", FileMode.Open), AudioSamplingRatesEnum.Rate16KHz);
                 }
 
                 // 5. Reset the state

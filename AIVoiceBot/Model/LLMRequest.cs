@@ -18,6 +18,9 @@ public class LLMRequest
 
 public class Content
 {
+    [JsonPropertyName("role")]
+    public string Role { get; set; }  // Opsiyonel alan
+
     [JsonPropertyName("parts")]
     public List<Part> Parts { get; set; }
 }

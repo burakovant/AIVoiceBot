@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using WebSocketSharp;
+using Org.BouncyCastle.Asn1.Ocsp;
 
 namespace AIVoiceBot.Client
 {
@@ -23,24 +24,21 @@ namespace AIVoiceBot.Client
             _httpClient = new HttpClient();
         }
 
-        public async Task<string> GetChatCompletionAsync(string userInput)
+        public async Task<string> GetChatCompletionAsync(LLMRequest llmRequest)
         {
-            LLMRequest requestBody = new LLMRequest
+            Content systemInstruction = new Content();
+            systemInstruction.Role = "system";
+            systemInstruction.Parts = new List<Part>();
+            Part part = new Part();
+            part.Text = _systemPrompt;
+            systemInstruction.Parts.Add(part);
+            llmRequest.SystemInstruction = systemInstruction;
+            if (_cachedContent != null)
             {
-                Contents = new List<Content>
-                {
-                    new Content
-                    {
-                        Parts = new List<Part>
-                        {
-                            new Part { Text = userInput }
-                        }
-                    }
-                },
-                CachedContent = _cachedContent.IsNullOrEmpty() ? null : _cachedContent
-            };
+                llmRequest.CachedContent = _cachedContent;
+            }
 
-            var json = JsonSerializer.Serialize(requestBody);
+            var json = JsonSerializer.Serialize(llmRequest);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.PostAsync(GeminiApiUrl + _apiKey, content);
